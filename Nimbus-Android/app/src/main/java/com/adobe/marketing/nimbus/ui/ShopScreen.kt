@@ -1,5 +1,7 @@
 package com.adobe.marketing.nimbus.ui
 
+import android.content.ActivityNotFoundException
+import android.content.Intent
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
@@ -35,6 +37,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
@@ -44,16 +47,45 @@ import com.adobe.marketing.nimbus.datamodels.ShopCategory
 import com.adobe.marketing.nimbus.datamodels.ShopUiState
 import com.adobe.marketing.nimbus.utils.asPrice
 import com.adobe.marketing.nimbus.viewmodels.ShopViewModel
+import androidx.compose.material.icons.filled.Campaign
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.derivedStateOf
+import androidx.compose.runtime.remember
+import androidx.core.net.toUri
+import com.adobe.marketing.nimbus.datamodels.Offer
+import com.adobe.marketing.nimbus.utils.toOfferSurface
+import com.adobe.marketing.nimbus.viewmodels.OffersViewModel
 
 @Composable
 fun ShopScreen(
     onProceedToCart: () -> Unit = {},
-    viewModel: ShopViewModel = hiltViewModel()
+    viewModel: ShopViewModel = hiltViewModel(),
+    offersViewModel: OffersViewModel = hiltViewModel()
 ) {
     val uiState by viewModel.uiState.collectAsStateWithLifecycle()
+    val surface = uiState.selectedCategory.toOfferSurface()
+
+    LaunchedEffect(surface) {
+        offersViewModel.ensureLoaded(surface)
+    }
+    val offersState = offersViewModel.uiState.collectAsStateWithLifecycle()
+    val heroCard by remember(surface) { derivedStateOf { offersState.value.offersBySurface[surface]?.firstOrNull()} }
+    val context = LocalContext.current
 
     ShopContent(
         uiState = uiState,
+        heroCard = heroCard,
+        onHeroCardTap = { card ->
+            offersViewModel.onCardInteracted(card.id)
+            card.actionUrl?.let { url ->
+                try {
+                    context.startActivity(Intent(Intent.ACTION_VIEW, url.toUri()))
+                } catch (_: ActivityNotFoundException) {
+                    // No app can handle this URL - ignore.
+                }
+            }
+        },
+        onHeroCardDisplayed = { offersViewModel.onCardDisplayed(it.id) },
         onSelectCategory = viewModel::selectCategory,
         onIncrement = viewModel::increment,
         onDecrement = viewModel::decrement,
@@ -64,12 +96,22 @@ fun ShopScreen(
 @Composable
 private fun ShopContent(
     uiState: ShopUiState,
+    heroCard: Offer?,
+    onHeroCardTap: (Offer) -> Unit,
+    onHeroCardDisplayed: (Offer) -> Unit,
     onSelectCategory: (ShopCategory?) -> Unit,
     onIncrement: (Product) -> Unit,
     onDecrement: (Product) -> Unit,
     onProceedToCart: () -> Unit
 ) {
     Column(modifier = Modifier.fillMaxSize()) {
+        heroCard?.let { card ->
+            ShopHeroBanner(
+                card = card,
+                onTap = { onHeroCardTap(card) },
+                onDisplayed = { onHeroCardDisplayed(card) }
+            )
+        }
         CategoryFilterRow(
             selectedCategory = uiState.selectedCategory,
             onSelectCategory = onSelectCategory
@@ -87,6 +129,31 @@ private fun ShopContent(
                 subtotal = uiState.subtotal,
                 onProceedToCart = onProceedToCart
             )
+        }
+    }
+}
+
+@Composable
+private fun ShopHeroBanner(card: Offer, onTap: () -> Unit, onDisplayed: () -> Unit) {
+    TrackedContentCard(
+        card = card,
+        onTap = onTap,
+        onDisplayed = onDisplayed,
+        modifier = Modifier.fillMaxWidth().padding(16.dp)
+    ) {
+        Row(modifier = Modifier.padding(16.dp), verticalAlignment =
+            Alignment.CenterVertically) {
+            Icon(
+                imageVector = Icons.Default.Campaign,
+                contentDescription = null,
+                modifier = Modifier.size(32.dp)
+            )
+            Spacer(modifier = Modifier.width(12.dp))
+            Column {
+                Text(card.title, style =
+                    MaterialTheme.typography.titleMedium)
+                Text(card.body, style = MaterialTheme.typography.bodySmall)
+            }
         }
     }
 }
